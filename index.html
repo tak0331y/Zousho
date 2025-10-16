@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>蔵書管理アプリ</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 p-4">
+  <h1 class="text-2xl font-bold mb-4">📚 蔵書管理アプリ</h1>
+  <div class="flex flex-col md:flex-row gap-4 mb-4">
+    <div>
+      <button id="startButton" class="bg-blue-500 text-white px-4 py-2 rounded mb-2">カメラ起動</button>
+      <button id="stopButton" class="bg-red-500 text-white px-4 py-2 rounded mb-2">カメラ停止</button>
+      <button id="exportButton" class="bg-green-500 text-white px-4 py-2 rounded mb-2">エクスポート</button>
+      <button id="importButton" class="bg-yellow-500 text-white px-4 py-2 rounded mb-2">インポート</button>
+      <input type="file" id="importFile" accept=".csv" class="hidden" />
+      <div id="camera" class="border mt-4 w-64 h-48 overflow-hidden"></div>
+    </div>
+    <div class="flex-1">
+      <h2 class="text-xl font-semibold mb-2">登録済み書籍</h2>
+      <ul id="bookList" class="space-y-2"></ul>
+    </div>
+  </div>
+
+  <script>
+    const startButton = document.getElementById('startButton');
+    const stopButton = document.getElementById('stopButton');
+    const exportButton = document.getElementById('exportButton');
+    const importButton = document.getElementById('importButton');
+    const importFile = document.getElementById('importFile');
+    const bookList = document.getElementById('bookList');
+
+    function fetchBookInfo(isbn) {
+      return fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`)
+        .then(response => response.json())
+        .then(data => {
+          if (data.totalItems > 0) {
+            const info = data.items[0].volumeInfo;
+            return {
+              isbn,
+              title: info.title || 'タイトル不明',
+              authors: (info.authors || ['著者不明']).join(', '),
+            };
+          }
+          return null;
+        });
+    }
+
+    function renderBooks() {
+      const books = JSON.parse(localStorage.getItem('books') || '[]');
+      bookList.innerHTML = '';
+      books.forEach((book, index) => {
+        const li = document.createElement('li');
+        li.className = 'bg-white p-4 rounded shadow flex justify-between items-center';
+        li.innerHTML = `<div><strong>${book.title}</strong><br>著者: ${book.authors}<br>ISBN: ${book.isbn}</div>
+                        <button onclick="deleteBook(${index})" class="bg-red-400 px-3 py-1 rounded text-white">削除</button>`;
+        bookList.appendChild(li);
+      });
+    }
+
+    function deleteBook(index) {
+      const books = JSON.parse(localStorage.getItem('books') || '[]');
+      books.splice(index, 1);
+      localStorage.setItem('books', JSON.stringify(books));
+      renderBooks();
+    }
+
+    function addBook(book) {
+      const books = JSON.parse(localStorage.getItem('books') || '[]');
+      if (!books.find(b => b.isbn === book.isbn)) {
+        books.unshift(book);
+        localStorage.setItem('books', JSON.stringify(books));
+        renderBooks();
+      }
+    }
+
+    function exportToCSV() {
+      const books = JSON.parse(localStorage.getItem('books') || '[]');
+      const csvContent = 'ISBN,Title,Authors\n' + books.map(b => `${b.isbn},"${b.title}","${b.authors}"`).join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'books.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function importFromCSV(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target.result;
+        const lines = text.trim().split('\n').slice(1);
+        lines.forEach(line => {
+          const [isbn, title, authors] = line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(s => s.replace(/^"|"$/g, '').trim());
+          addBook({ isbn, title, authors });
+        });
+      };
+      reader.readAsText(file);
+    }
+
+    startButton.addEventListener('click', () => {
+      Quagga.init({
+        inputStream: {
+          name: 'Live',
+          type: 'LiveStream',
+          target: document.querySelector('#camera'),
+          constraints: { width: 640, height: 480 }
+        },
+        decoder: {
+          readers: ['ean_reader']
+        }
+      }, err => {
+        if (err) return console.error(err);
+        Quagga.start();
+      });
+
+      Quagga.onDetected(async data => {
+        const isbn = data.codeResult.code;
+        if (/^97[89]\d{10}$/.test(isbn)) {
+          Quagga.stop();
+          const book = await fetchBookInfo(isbn);
+          if (book) addBook(book);
+        }
+      });
+    });
+
+    stopButton.addEventListener('click', () => {
+      Quagga.stop();
+    });
+
+    exportButton.addEventListener('click', exportToCSV);
+
+    importButton.addEventListener('click', () => {
+      importFile.click();
+    });
+
+    importFile.addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (file) importFromCSV(file);
+    });
+
+    renderBooks();
+  </script>
+</body>
+</html>
