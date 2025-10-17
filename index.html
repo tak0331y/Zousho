@@ -32,30 +32,48 @@
     const importFile = document.getElementById('importFile');
     const bookList = document.getElementById('bookList');
 
-    function fetchBookInfo(isbn) {
-      return fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`)
-        .then(response => response.json())
-        .then(data => {
-          if (data.totalItems > 0) {
-            const info = data.items[0].volumeInfo;
-            return {
-              isbn,
-              title: info.title || 'タイトル不明',
-              authors: (info.authors || ['著者不明']).join(', '),
-            };
-          }
-          return null;
-        });
+    // --- 書籍情報を取得 ---
+    async function fetchBookInfo(isbn) {
+      const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+      const data = await response.json();
+      if (data.totalItems > 0) {
+        const item = data.items[0];
+        const info = item.volumeInfo;
+        const sale = item.saleInfo || {}; // ★追加
+
+        // ★定価情報を取得（存在しない場合は「不明」）
+        let price = '不明';
+        if (sale.listPrice && sale.listPrice.amount) {
+          price = `${sale.listPrice.amount} ${sale.listPrice.currencyCode || 'JPY'}`;
+        } else if (sale.retailPrice && sale.retailPrice.amount) {
+          price = `${sale.retailPrice.amount} ${sale.retailPrice.currencyCode || 'JPY'}`;
+        }
+
+        return {
+          isbn,
+          title: info.title || 'タイトル不明',
+          authors: (info.authors || ['著者不明']).join(', '),
+          price // ★追加
+        };
+      }
+      return null;
     }
 
+    // --- 書籍リストを表示 ---
     function renderBooks() {
       const books = JSON.parse(localStorage.getItem('books') || '[]');
       bookList.innerHTML = '';
       books.forEach((book, index) => {
         const li = document.createElement('li');
         li.className = 'bg-white p-4 rounded shadow flex justify-between items-center';
-        li.innerHTML = `<div><strong>${book.title}</strong><br>著者: ${book.authors}<br>ISBN: ${book.isbn}</div>
-                        <button onclick="deleteBook(${index})" class="bg-red-400 px-3 py-1 rounded text-white">削除</button>`;
+        li.innerHTML = `
+          <div>
+            <strong>${book.title}</strong><br>
+            著者: ${book.authors}<br>
+            ISBN: ${book.isbn}<br>
+            定価: ${book.price || '不明'} <!-- ★追加 -->
+          </div>
+          <button onclick="deleteBook(${index})" class="bg-red-400 px-3 py-1 rounded text-white">削除</button>`;
         bookList.appendChild(li);
       });
     }
@@ -76,9 +94,12 @@
       }
     }
 
+    // --- CSV出力に定価も追加 ---
     function exportToCSV() {
       const books = JSON.parse(localStorage.getItem('books') || '[]');
-      const csvContent = 'ISBN,Title,Authors\n' + books.map(b => `${b.isbn},"${b.title}","${b.authors}"`).join('\n');
+      const csvContent = 'ISBN,Title,Authors,Price\n' + books.map(b => 
+        `${b.isbn},"${b.title}","${b.authors}","${b.price || ''}"`
+      ).join('\n');
       const blob = new Blob([csvContent], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -88,19 +109,21 @@
       URL.revokeObjectURL(url);
     }
 
+    // --- CSVインポートに定価も対応 ---
     function importFromCSV(file) {
       const reader = new FileReader();
       reader.onload = (e) => {
         const text = e.target.result;
         const lines = text.trim().split('\n').slice(1);
         lines.forEach(line => {
-          const [isbn, title, authors] = line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(s => s.replace(/^"|"$/g, '').trim());
-          addBook({ isbn, title, authors });
+          const [isbn, title, authors, price] = line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(s => s.replace(/^"|"$/g, '').trim());
+          addBook({ isbn, title, authors, price });
         });
       };
       reader.readAsText(file);
     }
 
+    // --- カメラ起動とバーコード読取 ---
     startButton.addEventListener('click', () => {
       Quagga.init({
         inputStream: {
@@ -109,9 +132,7 @@
           target: document.querySelector('#camera'),
           constraints: { width: 640, height: 480 }
         },
-        decoder: {
-          readers: ['ean_reader']
-        }
+        decoder: { readers: ['ean_reader'] }
       }, err => {
         if (err) return console.error(err);
         Quagga.start();
@@ -132,13 +153,9 @@
     });
 
     exportButton.addEventListener('click', exportToCSV);
-
-    importButton.addEventListener('click', () => {
-      importFile.click();
-    });
-
-    importFile.addEventListener('change', (event) => {
-      const file = event.target.files[0];
+    importButton.addEventListener('click', () => importFile.click());
+    importFile.addEventListener('change', e => {
+      const file = e.target.files[0];
       if (file) importFromCSV(file);
     });
 
