@@ -3,153 +3,210 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>蔵書管理アプリ</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+  <title>テニススコア管理アプリ</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 p-4">
-  <h1 class="text-2xl font-bold mb-4">📚 蔵書管理アプリ</h1>
-  <div class="flex flex-col md:flex-row gap-4 mb-4">
-    <div>
-      <button id="startButton" class="bg-blue-500 text-white px-4 py-2 rounded mb-2">カメラ起動</button>
-      <button id="stopButton" class="bg-red-500 text-white px-4 py-2 rounded mb-2">カメラ停止</button>
-      <button id="exportButton" class="bg-green-500 text-white px-4 py-2 rounded mb-2">エクスポート</button>
-      <button id="importButton" class="bg-yellow-500 text-white px-4 py-2 rounded mb-2">インポート</button>
-      <input type="file" id="importFile" accept=".csv" class="hidden" />
-      <div id="camera" class="border mt-4 w-64 h-48 overflow-hidden"></div>
+  <div class="max-w-3xl mx-auto bg-white p-4 rounded-2xl shadow-xl">
+    <h1 class="text-2xl font-bold mb-4 text-center">テニススコア管理アプリ</h1>
+
+    <table class="table-auto w-full mb-4 border">
+      <thead>
+        <tr class="bg-gray-200">
+          <th class="p-2 border">名前</th>
+          <th class="p-2 border">セット</th>
+          <th class="p-2 border">ゲーム</th>
+          <th class="p-2 border">ポイント</th>
+          <th class="p-2 border">操作</th>
+        </tr>
+      </thead>
+      <tbody id="score-table">
+        <!-- 動的に生成 -->
+      </tbody>
+    </table>
+
+    <div class="text-center mb-4">
+      <button onclick="undoPoint()" class="bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded-xl shadow">直近のポイントを削除</button>
     </div>
-    <div class="flex-1">
-      <h2 class="text-xl font-semibold mb-2">登録済み書籍</h2>
-      <ul id="bookList" class="space-y-2"></ul>
+
+    <h2 class="text-xl font-semibold mb-2">履歴</h2>
+    <ul id="history" class="space-y-1">
+      <!-- 動的に履歴表示 -->
+    </ul>
+
+    <div class="text-center mt-6">
+      <button onclick="resetAllData()" class="bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded-xl shadow">全データのリセット</button>
     </div>
   </div>
 
   <script>
-    const startButton = document.getElementById('startButton');
-    const stopButton = document.getElementById('stopButton');
-    const exportButton = document.getElementById('exportButton');
-    const importButton = document.getElementById('importButton');
-    const importFile = document.getElementById('importFile');
-    const bookList = document.getElementById('bookList');
+    const pointOrder = ['0', '15', '30', '40', 'アドバンテージ'];
+    let score = {
+      PlayerA: { set: 0, game: 0, point: 0, tiebreak: 0 },
+      PlayerB: { set: 0, game: 0, point: 0, tiebreak: 0 },
+      tiebreakMode: false
+    };
+    let history = [];
+    let snapshots = [];
 
-    // ✅ 画像も取得するように修正
-    function fetchBookInfo(isbn) {
-      return fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`)
-        .then(response => response.json())
-        .then(data => {
-          if (data.totalItems > 0) {
-            const info = data.items[0].volumeInfo;
-            return {
-              isbn,
-              title: info.title || 'タイトル不明',
-              authors: (info.authors || ['著者不明']).join(', '),
-              image: info.imageLinks?.thumbnail || '' // ✅ サムネイル画像
-            };
+    function loadFromStorage() {
+      const savedScore = localStorage.getItem('tennisScore');
+      const savedHistory = localStorage.getItem('tennisHistory');
+      const savedSnapshots = localStorage.getItem('tennisSnapshots');
+      if (savedScore) score = JSON.parse(savedScore);
+      if (savedHistory) history = JSON.parse(savedHistory);
+      if (savedSnapshots) snapshots = JSON.parse(savedSnapshots);
+      render();
+    }
+
+    function saveToStorage() {
+      localStorage.setItem('tennisScore', JSON.stringify(score));
+      localStorage.setItem('tennisHistory', JSON.stringify(history));
+      localStorage.setItem('tennisSnapshots', JSON.stringify(snapshots));
+    }
+
+    function addPoint(player) {
+      snapshots.push(JSON.stringify(score)); // スナップショット保存
+      if (score.tiebreakMode) {
+        score[player].tiebreak++;
+        checkTiebreakWinner(player);
+      } else {
+        score[player].point++;
+        updateGameSet(player);
+      }
+      addHistory(player);
+      saveToStorage();
+      render();
+    }
+
+    function updateGameSet(player) {
+      const other = player === 'PlayerA' ? 'PlayerB' : 'PlayerA';
+      const pPoint = score[player].point;
+      const oPoint = score[other].point;
+
+      if (pPoint >= 4) {
+        if (pPoint - oPoint >= 2) {
+          score[player].game++;
+          score.PlayerA.point = 0;
+          score.PlayerB.point = 0;
+
+          if (score[player].game === 6 && score[other].game === 6) {
+            score.tiebreakMode = true;
+          } else if (score[player].game >= 6 && score[player].game - score[other].game >= 2) {
+            score[player].set++;
+            score.PlayerA.game = 0;
+            score.PlayerB.game = 0;
           }
-          return null;
-        });
-    }
-
-    function renderBooks() {
-      const books = JSON.parse(localStorage.getItem('books') || '[]');
-      bookList.innerHTML = '';
-      books.forEach((book, index) => {
-        const li = document.createElement('li');
-        li.className = 'bg-white p-4 rounded shadow flex items-center gap-4';
-        const imgTag = book.image
-          ? `<img src="${book.image}" alt="${book.title}" class="w-16 h-24 object-cover rounded">`
-          : `<div class="w-16 h-24 bg-gray-300 flex items-center justify-center text-gray-500 text-sm">No Img</div>`;
-        li.innerHTML = `
-          ${imgTag}
-          <div class="flex-1">
-            <strong>${book.title}</strong><br>
-            著者: ${book.authors}<br>
-            ISBN: ${book.isbn}
-          </div>
-          <button onclick="deleteBook(${index})" class="bg-red-400 px-3 py-1 rounded text-white">削除</button>
-        `;
-        bookList.appendChild(li);
-      });
-    }
-
-    function deleteBook(index) {
-      const books = JSON.parse(localStorage.getItem('books') || '[]');
-      books.splice(index, 1);
-      localStorage.setItem('books', JSON.stringify(books));
-      renderBooks();
-    }
-
-    function addBook(book) {
-      const books = JSON.parse(localStorage.getItem('books') || '[]');
-      if (!books.find(b => b.isbn === book.isbn)) {
-        books.unshift(book);
-        localStorage.setItem('books', JSON.stringify(books));
-        renderBooks();
+        }
       }
     }
 
-    function exportToCSV() {
-      const books = JSON.parse(localStorage.getItem('books') || '[]');
-      const csvContent = 'ISBN,Title,Authors,Image\n' + books.map(b =>
-        `${b.isbn},"${b.title}","${b.authors}","${b.image || ''}"`
-      ).join('\n');
-      const blob = new Blob([csvContent], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'books.csv';
-      a.click();
-      URL.revokeObjectURL(url);
+    function checkTiebreakWinner(player) {
+      const other = player === 'PlayerA' ? 'PlayerB' : 'PlayerA';
+      const pPoint = score[player].tiebreak;
+      const oPoint = score[other].tiebreak;
+
+      if (pPoint >= 7 && pPoint - oPoint >= 2) {
+        score[player].set++;
+        score.PlayerA.game = 0;
+        score.PlayerB.game = 0;
+        score.PlayerA.tiebreak = 0;
+        score.PlayerB.tiebreak = 0;
+        score.tiebreakMode = false;
+      }
     }
 
-    function importFromCSV(file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = e.target.result;
-        const lines = text.trim().split('\n').slice(1);
-        lines.forEach(line => {
-          const [isbn, title, authors, image] = line
-            .split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
-            .map(s => s.replace(/^"|"$/g, '').trim());
-          addBook({ isbn, title, authors, image });
-        });
-      };
-      reader.readAsText(file);
-    }
-
-    startButton.addEventListener('click', () => {
-      Quagga.init({
-        inputStream: {
-          name: 'Live',
-          type: 'LiveStream',
-          target: document.querySelector('#camera'),
-          constraints: { width: 640, height: 480 }
-        },
-        decoder: { readers: ['ean_reader'] }
-      }, err => {
-        if (err) return console.error(err);
-        Quagga.start();
-      });
-
-      Quagga.onDetected(async data => {
-        const isbn = data.codeResult.code;
-        if (/^97[89]\d{10}$/.test(isbn)) {
-          Quagga.stop();
-          const book = await fetchBookInfo(isbn);
-          if (book) addBook(book);
+    function addHistory(player) {
+      let pointDisplay;
+      if (score.tiebreakMode) {
+        pointDisplay = `タイブレーク：${score.PlayerA.tiebreak}-${score.PlayerB.tiebreak}`;
+      } else {
+        const pa = score.PlayerA.point;
+        const pb = score.PlayerB.point;
+        if (pa >= 3 && pb >= 3) {
+          if (pa === pb) {
+            pointDisplay = 'ポイント：40-40';
+          } else {
+            pointDisplay = `ポイント：${pa > pb ? 'アドバンテージ' : '40'}-${pb > pa ? 'アドバンテージ' : '40'}`;
+          }
+        } else {
+          pointDisplay = `ポイント：${pointOrder[pa] || '0'}-${pointOrder[pb] || '0'}`;
         }
+      }
+      const entry = `${player}　セット：${score.PlayerA.set}-${score.PlayerB.set}　ゲーム：${score.PlayerA.game}-${score.PlayerB.game}　${pointDisplay}`;
+      history.unshift(entry);
+    }
+
+    function undoPoint() {
+      if (history.length > 0 && snapshots.length > 0) {
+        history.shift();
+        const previousState = JSON.parse(snapshots.pop());
+        score = previousState;
+        saveToStorage();
+        render();
+      }
+    }
+
+    function resetAllData() {
+      if (confirm('全データをリセットしますか？')) {
+        score = {
+          PlayerA: { set: 0, game: 0, point: 0, tiebreak: 0 },
+          PlayerB: { set: 0, game: 0, point: 0, tiebreak: 0 },
+          tiebreakMode: false
+        };
+        history = [];
+        snapshots = [];
+        saveToStorage();
+        location.reload();
+      }
+    }
+
+    function render() {
+      const table = document.getElementById('score-table');
+      table.innerHTML = '';
+      ['PlayerA', 'PlayerB'].forEach(player => {
+        const other = player === 'PlayerA' ? 'PlayerB' : 'PlayerA';
+        const row = document.createElement('tr');
+        let pointValue;
+        if (!score.tiebreakMode) {
+          const pa = score[player].point;
+          const pb = score[other].point;
+          if (pa >= 3 && pb >= 3) {
+            if (pa === pb) {
+              pointValue = '40';
+            } else {
+              pointValue = pa > pb ? 'アドバンテージ' : '40';
+            }
+          } else {
+            pointValue = pointOrder[pa] || '0';
+          }
+        } else {
+          pointValue = score[player].tiebreak;
+        }
+
+        row.innerHTML = `
+          <td class="p-2 border">${player}</td>
+          <td class="p-2 border">${score[player].set}</td>
+          <td class="p-2 border">${score[player].game}</td>
+          <td class="p-2 border">${pointValue}</td>
+          <td class="p-2 border text-center">
+            <button onclick="addPoint('${player}')" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded-xl shadow">ポイント</button>
+          </td>
+        `;
+        table.appendChild(row);
       });
-    });
 
-    stopButton.addEventListener('click', () => Quagga.stop());
-    exportButton.addEventListener('click', exportToCSV);
-    importButton.addEventListener('click', () => importFile.click());
-    importFile.addEventListener('change', e => {
-      const file = e.target.files[0];
-      if (file) importFromCSV(file);
-    });
+      const historyList = document.getElementById('history');
+      historyList.innerHTML = '';
+      history.forEach(entry => {
+        const li = document.createElement('li');
+        li.textContent = entry;
+        li.classList.add('bg-gray-200', 'p-2', 'rounded-xl', 'shadow');
+        historyList.appendChild(li);
+      });
+    }
 
-    renderBooks();
+    window.onload = loadFromStorage;
   </script>
 </body>
 </html>
