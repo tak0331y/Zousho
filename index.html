@@ -1,15 +1,14 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>📚 蔵書管理アプリ（拡張版）</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>蔵書管理アプリ</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 p-4">
   <h1 class="text-2xl font-bold mb-4">📚 蔵書管理アプリ</h1>
-
   <div class="flex flex-col md:flex-row gap-4 mb-4">
     <div>
       <button id="startButton" class="bg-blue-500 text-white px-4 py-2 rounded mb-2">カメラ起動</button>
@@ -17,13 +16,9 @@
       <button id="exportButton" class="bg-green-500 text-white px-4 py-2 rounded mb-2">エクスポート</button>
       <button id="importButton" class="bg-yellow-500 text-white px-4 py-2 rounded mb-2">インポート</button>
       <input type="file" id="importFile" accept=".csv" class="hidden" />
-      <div id="camera" class="border mt-4 w-64 h-48 overflow-hidden relative">
-        <div class="absolute inset-0 border-4 border-green-400 rounded pointer-events-none"></div>
-      </div>
-      <p class="text-sm text-gray-500 mt-2">バーコードを中央の枠に合わせてください</p>
+      <div id="camera" class="border mt-4 w-64 h-48 overflow-hidden"></div>
     </div>
-
-    <div class="flex-1 overflow-y-auto max-h-[80vh]">
+    <div class="flex-1">
       <h2 class="text-xl font-semibold mb-2">登録済み書籍</h2>
       <ul id="bookList" class="space-y-2"></ul>
     </div>
@@ -37,67 +32,41 @@
     const importFile = document.getElementById('importFile');
     const bookList = document.getElementById('bookList');
 
-    // --- 書籍情報取得（Google Books API） ---
-    async function fetchBookInfo(isbn) {
-      const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
-      const data = await response.json();
-      if (data.totalItems === 0) return null;
-
-      const item = data.items[0];
-      const info = item.volumeInfo;
-      const sale = item.saleInfo || {};
-
-      const identifiers = info.industryIdentifiers || [];
-      const isbn10 = identifiers.find(id => id.type === "ISBN_10")?.identifier || "不明";
-      const isbn13 = identifiers.find(id => id.type === "ISBN_13")?.identifier || "不明";
-
-      let price = "不明";
-      if (sale.listPrice && sale.listPrice.amount) {
-        price = `${sale.listPrice.amount} ${sale.listPrice.currencyCode || 'JPY'}`;
-      } else if (sale.retailPrice && sale.retailPrice.amount) {
-        price = `${sale.retailPrice.amount} ${sale.retailPrice.currencyCode || 'JPY'}`;
-      }
-
-      return {
-        isbn,
-        title: info.title || "タイトル不明",
-        subtitle: info.subtitle || "",
-        authors: (info.authors || ["著者不明"]).join(", "),
-        publishedDate: info.publishedDate || "不明",
-        description: info.description || "説明文なし",
-        isbn10,
-        isbn13,
-        pageCount: info.pageCount || "不明",
-        language: info.language || "不明",
-        thumbnail: info.imageLinks?.thumbnail || "",
-        price
-      };
+    // ✅ 画像も取得するように修正
+    function fetchBookInfo(isbn) {
+      return fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`)
+        .then(response => response.json())
+        .then(data => {
+          if (data.totalItems > 0) {
+            const info = data.items[0].volumeInfo;
+            return {
+              isbn,
+              title: info.title || 'タイトル不明',
+              authors: (info.authors || ['著者不明']).join(', '),
+              image: info.imageLinks?.thumbnail || '' // ✅ サムネイル画像
+            };
+          }
+          return null;
+        });
     }
 
-    // --- 書籍リスト描画 ---
     function renderBooks() {
       const books = JSON.parse(localStorage.getItem('books') || '[]');
       bookList.innerHTML = '';
       books.forEach((book, index) => {
         const li = document.createElement('li');
-        li.className = 'bg-white p-4 rounded shadow';
+        li.className = 'bg-white p-4 rounded shadow flex items-center gap-4';
+        const imgTag = book.image
+          ? `<img src="${book.image}" alt="${book.title}" class="w-16 h-24 object-cover rounded">`
+          : `<div class="w-16 h-24 bg-gray-300 flex items-center justify-center text-gray-500 text-sm">No Img</div>`;
         li.innerHTML = `
-          <div class="flex gap-4">
-            ${book.thumbnail ? `<img src="${book.thumbnail}" alt="thumbnail" class="w-24 h-32 object-cover rounded">` : ''}
-            <div class="flex-1">
-              <h3 class="text-lg font-semibold">${book.title}${book.subtitle ? '：' + book.subtitle : ''}</h3>
-              <p class="text-sm text-gray-700 mb-1">著者: ${book.authors}</p>
-              <p class="text-sm text-gray-700 mb-1">出版日: ${book.publishedDate}</p>
-              <p class="text-sm text-gray-700 mb-1">ISBN10: ${book.isbn10} / ISBN13: ${book.isbn13}</p>
-              <p class="text-sm text-gray-700 mb-1">ページ数: ${book.pageCount}</p>
-              <p class="text-sm text-gray-700 mb-1">言語: ${book.language}</p>
-              <p class="text-sm text-gray-700 mb-1">定価: ${book.price}</p>
-              <p class="text-gray-600 text-sm mt-2 line-clamp-4">${book.description}</p>
-            </div>
+          ${imgTag}
+          <div class="flex-1">
+            <strong>${book.title}</strong><br>
+            著者: ${book.authors}<br>
+            ISBN: ${book.isbn}
           </div>
-          <div class="flex justify-end mt-2">
-            <button onclick="deleteBook(${index})" class="bg-red-400 px-3 py-1 rounded text-white">削除</button>
-          </div>
+          <button onclick="deleteBook(${index})" class="bg-red-400 px-3 py-1 rounded text-white">削除</button>
         `;
         bookList.appendChild(li);
       });
@@ -112,28 +81,18 @@
 
     function addBook(book) {
       const books = JSON.parse(localStorage.getItem('books') || '[]');
-      if (!books.find(b => b.isbn13 === book.isbn13)) {
+      if (!books.find(b => b.isbn === book.isbn)) {
         books.unshift(book);
         localStorage.setItem('books', JSON.stringify(books));
         renderBooks();
       }
     }
 
-    // --- CSV出力 ---
     function exportToCSV() {
       const books = JSON.parse(localStorage.getItem('books') || '[]');
-      const csvHeader = [
-        "ISBN13", "Title", "Subtitle", "Authors", "PublishedDate", "Description",
-        "ISBN10", "PageCount", "Language", "ThumbnailURL", "Price"
-      ];
-      const csvContent = [csvHeader.join(",")].concat(
-        books.map(b => [
-          b.isbn13, `"${b.title}"`, `"${b.subtitle}"`, `"${b.authors}"`,
-          b.publishedDate, `"${b.description}"`, b.isbn10,
-          b.pageCount, b.language, b.thumbnail, `"${b.price}"`
-        ].join(","))
-      ).join("\n");
-
+      const csvContent = 'ISBN,Title,Authors,Image\n' + books.map(b =>
+        `${b.isbn},"${b.title}","${b.authors}","${b.image || ''}"`
+      ).join('\n');
       const blob = new Blob([csvContent], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -143,75 +102,46 @@
       URL.revokeObjectURL(url);
     }
 
-    // --- CSV読込 ---
     function importFromCSV(file) {
       const reader = new FileReader();
       reader.onload = (e) => {
         const text = e.target.result;
         const lines = text.trim().split('\n').slice(1);
         lines.forEach(line => {
-          const parts = line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(s => s.replace(/^"|"$/g, '').trim());
-          const [isbn13, title, subtitle, authors, publishedDate, description, isbn10, pageCount, language, thumbnail, price] = parts;
-          addBook({ isbn13, title, subtitle, authors, publishedDate, description, isbn10, pageCount, language, thumbnail, price });
+          const [isbn, title, authors, image] = line
+            .split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
+            .map(s => s.replace(/^"|"$/g, '').trim());
+          addBook({ isbn, title, authors, image });
         });
       };
       reader.readAsText(file);
     }
 
-    // --- カメラバーコード読取（改良版） ---
     startButton.addEventListener('click', () => {
       Quagga.init({
         inputStream: {
           name: 'Live',
           type: 'LiveStream',
           target: document.querySelector('#camera'),
-          constraints: {
-            width: { min: 640, ideal: 1280, max: 1920 },
-            height: { min: 480, ideal: 720, max: 1080 },
-            facingMode: 'environment'
-          }
+          constraints: { width: 640, height: 480 }
         },
-        locator: { patchSize: 'medium', halfSample: true },
-        numOfWorkers: 0,
-        locate: true,
-        decoder: { readers: ['ean_reader', 'ean_13_reader'] }
+        decoder: { readers: ['ean_reader'] }
       }, err => {
-        if (err) {
-          console.error(err);
-          alert('カメラ起動に失敗しました');
-          return;
-        }
+        if (err) return console.error(err);
         Quagga.start();
-        console.log('📷 カメラ起動中...');
       });
-
-      let lastCode = null;
-      let sameCount = 0;
 
       Quagga.onDetected(async data => {
         const isbn = data.codeResult.code;
-        if (!/^97[89]\d{10}$/.test(isbn)) return;
-
-        if (isbn === lastCode) {
-          sameCount++;
-          if (sameCount >= 3) {
-            Quagga.stop();
-            console.log(`✅ 検出確定: ${isbn}`);
-            const book = await fetchBookInfo(isbn);
-            if (book) addBook(book);
-          }
-        } else {
-          lastCode = isbn;
-          sameCount = 1;
+        if (/^97[89]\d{10}$/.test(isbn)) {
+          Quagga.stop();
+          const book = await fetchBookInfo(isbn);
+          if (book) addBook(book);
         }
       });
     });
 
-    stopButton.addEventListener('click', () => {
-      Quagga.stop();
-      console.log('🛑 カメラ停止');
-    });
-
+    stopButton.addEventListener('click', () => Quagga.stop());
     exportButton.addEventListener('click', exportToCSV);
     importButton.addEventListener('click', () => importFile.click());
     importFile.addEventListener('change', e => {
